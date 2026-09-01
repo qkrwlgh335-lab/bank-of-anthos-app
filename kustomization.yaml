@@ -1,0 +1,89 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: bank-app
+resources:
+  - deploy/aws-eks/namespace.yaml
+  - deploy/aws-eks/ingress-class.yaml
+  - deploy/aws-eks/common.yaml
+  - deploy/aws-eks/ingress.yaml
+  - kubernetes-manifests/balance-reader.yaml
+  - kubernetes-manifests/contacts.yaml
+  - kubernetes-manifests/frontend.yaml
+  - kubernetes-manifests/ledger-writer.yaml
+  - kubernetes-manifests/transaction-history.yaml
+  - kubernetes-manifests/userservice.yaml
+images:
+  - name: us-central1-docker.pkg.dev/bank-of-anthos-ci/bank-of-anthos/balancereader
+    newName: 141177383006.dkr.ecr.ap-northeast-2.amazonaws.com/bank-app/balancereader
+    newTag: dev-v1
+  - name: us-central1-docker.pkg.dev/bank-of-anthos-ci/bank-of-anthos/contacts
+    newName: 141177383006.dkr.ecr.ap-northeast-2.amazonaws.com/bank-app/contacts
+    newTag: dev-v1
+  - name: us-central1-docker.pkg.dev/bank-of-anthos-ci/bank-of-anthos/frontend
+    newName: 141177383006.dkr.ecr.ap-northeast-2.amazonaws.com/bank-app/frontend
+    newTag: dev-v2
+  - name: us-central1-docker.pkg.dev/bank-of-anthos-ci/bank-of-anthos/ledgerwriter
+    newName: 141177383006.dkr.ecr.ap-northeast-2.amazonaws.com/bank-app/ledgerwriter
+    newTag: dev-v1
+  - name: us-central1-docker.pkg.dev/bank-of-anthos-ci/bank-of-anthos/transactionhistory
+    newName: 141177383006.dkr.ecr.ap-northeast-2.amazonaws.com/bank-app/transactionhistory
+    newTag: dev-v2
+  - name: us-central1-docker.pkg.dev/bank-of-anthos-ci/bank-of-anthos/userservice
+    newName: 141177383006.dkr.ecr.ap-northeast-2.amazonaws.com/bank-app/userservice
+    newTag: dev-v1
+patches:
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: remove
+        path: /spec/template/metadata/annotations
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env/2/value
+        value: "false"
+  - target:
+      kind: Deployment
+      name: "balancereader|ledgerwriter|transactionhistory"
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env/3/value
+        value: "false"
+  - target:
+      kind: Deployment
+      name: frontend
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: ENV_PLATFORM
+          value: aws
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: BANK_NAME
+          value: Bank App
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+  - target:
+      kind: Service
+      name: frontend
+    patch: |-
+      - op: replace
+        path: /spec/type
+        value: ClusterIP
+  - target:
+      kind: Deployment
+      name: "contacts|balancereader|ledgerwriter|transactionhistory"
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/envFrom/-
+        value:
+          secretRef:
+            name: bank-app-secrets

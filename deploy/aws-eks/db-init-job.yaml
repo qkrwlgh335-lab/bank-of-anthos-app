@@ -1,0 +1,38 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bank-db-init
+  namespace: bank-app
+spec:
+  backoffLimit: 4
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          env:
+            - name: PGHOST
+              valueFrom: { secretKeyRef: { name: db-admin, key: DB_HOST } }
+            - name: PGPORT
+              valueFrom: { secretKeyRef: { name: db-admin, key: DB_PORT } }
+            - name: PGUSER
+              valueFrom: { secretKeyRef: { name: db-admin, key: DB_ADMIN_USERNAME } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: db-admin, key: DB_ADMIN_PASSWORD } }
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              psql -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+              SELECT 'CREATE DATABASE accounts' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'accounts')\gexec
+              SELECT 'CREATE DATABASE ledger' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'ledger')\gexec
+              SQL
+              psql -d accounts -v ON_ERROR_STOP=1 -f /schema/accounts.sql
+              psql -d ledger -v ON_ERROR_STOP=1 -f /schema/ledger.sql
+          volumeMounts:
+            - name: schema
+              mountPath: /schema
+      volumes:
+        - name: schema
+          configMap:
+            name: bank-db-schema

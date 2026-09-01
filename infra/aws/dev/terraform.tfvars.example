@@ -1,0 +1,10 @@
+# Copy this file to terraform.tfvars and adjust it for your environment.
+# Replace CHANGE_ME values only in terraform.tfvars.
+# Never commit the resulting terraform.tfvars file.
+
+region              = "ap-northeast-2"
+name                = "bank-app-dev"
+node_instance_types = ["t3.medium"]
+db_admin_username   = "bankadmin"
+db_admin_password   = "CHANGE_ME_DATABASE_PASSWORD"
+redis_auth_token    = "CHANGE_ME_REDIS_AUTH_TOKEN"

@@ -1,0 +1,200 @@
+name: Service CI and GitOps promotion
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/**"
+      - ".github/workflows/ci.yml"
+      - ".github/scripts/**"
+      - "pom.xml"
+      - "mvnw"
+      - ".mvn/**"
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - ".github/workflows/ci.yml"
+      - ".github/scripts/**"
+      - "pom.xml"
+      - "mvnw"
+      - ".mvn/**"
+  workflow_dispatch:
+    inputs:
+      build_all:
+        description: Build and promote all six services
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: bank-app-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_TAG: sha-${{ github.sha }}
+
+jobs:
+  changes:
+    name: Select changed services
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.services.outputs.matrix }}
+      has_changes: ${{ steps.services.outputs.has_changes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: services
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BUILD_ALL: ${{ inputs.build_all }}
+        run: |
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$BUILD_ALL" == "true" ]]; then
+            python .github/scripts/changed_services.py --all
+          elif [[ "$EVENT_NAME" == "pull_request" ]]; then
+            python .github/scripts/changed_services.py --base "$PR_BASE_SHA" --head "$GITHUB_SHA"
+          else
+            python .github/scripts/changed_services.py --base "$BEFORE_SHA" --head "$GITHUB_SHA"
+          fi
+
+  build-scan-push:
+    name: ${{ matrix.name }} / test, scan, publish
+    needs: changes
+    if: needs.changes.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.changes.outputs.matrix) }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        if: matrix.language == 'python'
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: ${{ matrix.path }}/uv.lock
+
+      - name: Test Python service
+        if: matrix.language == 'python' && matrix.name != 'frontend'
+        working-directory: ${{ matrix.path }}
+        run: uv run --frozen pytest
+
+      - name: Validate frontend Python source
+        if: matrix.name == 'frontend'
+        working-directory: ${{ matrix.path }}
+        run: uv run --frozen python -m compileall .
+
+      - name: Set up Java 17
+        if: matrix.language == 'java'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Test Java service
+        if: matrix.language == 'java'
+        run: ./mvnw -B -f "${{ matrix.path }}/pom.xml" test
+
+      - name: Build immutable image once
+        run: docker build --tag "bank-local/${{ matrix.name }}:${IMAGE_TAG}" "${{ matrix.path }}"
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: bank-local/${{ matrix.name }}:${{ env.IMAGE_TAG }}
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Configure AWS credentials through GitHub OIDC
+        if: github.event_name != 'pull_request'
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_CI_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Sign in to ECR
+        if: github.event_name != 'pull_request'
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Push the same image to ECR
+        if: github.event_name != 'pull_request'
+        env:
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          target="${ECR_REGISTRY}/${{ vars.ECR_PREFIX }}/${{ matrix.name }}:${IMAGE_TAG}"
+          docker tag "bank-local/${{ matrix.name }}:${IMAGE_TAG}" "$target"
+          docker push "$target"
+
+      - name: Authenticate to Google Cloud through WIF
+        if: github.event_name != 'pull_request'
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        if: github.event_name != 'pull_request'
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Push the same image to Artifact Registry
+        if: github.event_name != 'pull_request'
+        run: |
+          registry="${{ vars.GCP_REGION }}-docker.pkg.dev"
+          gcloud auth configure-docker "$registry" --quiet
+          target="$registry/${{ vars.GCP_PROJECT_ID }}/${{ vars.GAR_REPOSITORY }}/${{ matrix.name }}:${IMAGE_TAG}"
+          docker tag "bank-local/${{ matrix.name }}:${IMAGE_TAG}" "$target"
+          docker push "$target"
+
+  promote-gitops:
+    name: Promote immutable tags in GitOps
+    needs: [changes, build-scan-push]
+    if: github.event_name != 'pull_request' && needs.changes.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: app
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.GITOPS_REPOSITORY }}
+          token: ${{ secrets.GITOPS_TOKEN }}
+          path: gitops
+
+      - name: Update only successfully built services
+        shell: bash
+        env:
+          MATRIX: ${{ needs.changes.outputs.matrix }}
+        run: |
+          mapfile -t services < <(python -c 'import json,os; print("\n".join(x["name"] for x in json.loads(os.environ["MATRIX"])["include"]))')
+          python app/.github/scripts/update_gitops.py \
+            --file gitops/gitops/apps/bank-of-anthos/overlays/dev/kustomization.yaml \
+            --tag "$IMAGE_TAG" \
+            --services "${services[@]}"
+
+      - name: Commit desired-state change
+        working-directory: gitops
+        run: |
+          git config user.name "bank-app-ci"
+          git config user.email "bank-app-ci@users.noreply.github.com"
+          git add gitops/apps/bank-of-anthos/overlays/dev/kustomization.yaml
+          git diff --cached --quiet && exit 0
+          git commit -m "deploy: promote ${IMAGE_TAG}"
+          git push origin HEAD:main

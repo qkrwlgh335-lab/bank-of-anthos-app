@@ -18,3 +18,7 @@
 실행됩니다.
 
 필요한 GitHub 설정은 플랫폼 저장소의 `docs/github-setup.md`를 따릅니다.
+
+Trivy는 모든 HIGH/CRITICAL 결과를 Actions 로그에 기록하고 CRITICAL 발견 시 publish를
+차단합니다. HIGH는 이 PoC에서 가시화 대상으로 두며, 운영 전에는 수정 SLA와 예외 승인
+절차를 정한 뒤 차단 대상으로 승격합니다.

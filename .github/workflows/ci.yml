@@ -97,7 +97,7 @@ jobs:
 
       - name: Set up Java 17
         if: matrix.language == 'java'
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -110,12 +110,21 @@ jobs:
       - name: Build immutable image once
         run: docker build --tag "bank-local/${{ matrix.name }}:${IMAGE_TAG}" "${{ matrix.path }}"
 
-      - name: Scan image with Trivy
+      - name: Report HIGH and CRITICAL vulnerabilities with Trivy
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: bank-local/${{ matrix.name }}:${{ env.IMAGE_TAG }}
           format: table
           severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+
+      - name: Block CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: bank-local/${{ matrix.name }}:${{ env.IMAGE_TAG }}
+          format: table
+          severity: CRITICAL
           ignore-unfixed: true
           exit-code: "1"
 

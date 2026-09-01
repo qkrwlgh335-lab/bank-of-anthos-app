@@ -111,7 +111,7 @@ jobs:
         run: docker build --tag "bank-local/${{ matrix.name }}:${IMAGE_TAG}" "${{ matrix.path }}"
 
       - name: Scan image with Trivy
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: bank-local/${{ matrix.name }}:${{ env.IMAGE_TAG }}
           format: table

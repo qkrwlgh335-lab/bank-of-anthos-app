@@ -2,7 +2,9 @@
 
 Google의 오픈소스 샘플 Bank of Anthos를 AWS EKS 환경에 맞게 변경한 데모 은행 애플리케이션이다. 실제 금융 서비스가 아니므로 실제 개인정보나 금융정보를 입력하면 안 된다.
 
-현재 구성은 EKS, ALB, ECR, RDS PostgreSQL, ElastiCache Redis 및 AWS Secrets Manager를 사용한다. Eureka와 서비스 메시(Istio)는 사용하지 않는다.
+현재 Phase 1 PoC 구성은 EKS, ALB, ECR, RDS PostgreSQL, EKS 내부 Redis 및 AWS Secrets Manager를 사용한다. Eureka와 서비스 메시(Istio)는 사용하지 않는다.
+
+실제로 검증한 GitHub Actions 흐름과 실행 증거는 [Phase 1 애플리케이션 CI](docs/phase1-cicd.md)에 정리했다.
 
 > `infra/aws/dev`의 Terraform은 검증용 참고 구현이다. 실제 팀 환경에서는 네트워크, 보안, 가용성 및 비용 기준에 맞게 검토한 후 사용한다.
 
@@ -110,7 +112,7 @@ kubectl apply -k .
 
 - Accounts DB: RDS PostgreSQL
 - Ledger DB: RDS PostgreSQL
-- 회원가입 잠금: ElastiCache Redis
+- 회원가입 잠금: EKS 내부 Redis Deployment
 
 서비스 검색은 Eureka 대신 Kubernetes Service와 DNS를 사용한다. frontend는 `userservice:8080`, `ledgerwriter:8080`과 같은 이름으로 백엔드를 호출한다.
 
@@ -120,7 +122,7 @@ Internet
   -> frontend ClusterIP Service
   -> frontend Pod
   -> 5개 backend Service
-  -> RDS PostgreSQL / ElastiCache Redis
+  -> RDS PostgreSQL / EKS 내부 Redis
 ```
 
 ## 4. Terraform 인프라 생성
@@ -144,7 +146,7 @@ terraform apply tfplan
 terraform output
 ```
 
-Terraform 참고 구현은 VPC, subnet, NAT Gateway, EKS, managed node group, RDS PostgreSQL, ElastiCache Redis, ECR repository 및 Secrets Manager secret을 만든다.
+이 저장소의 Terraform은 원본 참고 구현이다. 현재 PoC의 실제 VPC, EKS, managed node group, ECR, Secrets Manager와 add-on은 별도 GitOps 저장소의 Terraform이 관리한다.
 
 팀 환경에서는 S3 remote state, state locking, VPC 주소, RDS Multi-AZ/backup, Redis failover, NAT Gateway 비용과 EKS node 크기를 별도로 결정한다.
 
@@ -303,4 +305,4 @@ uv sync
 uv run pytest
 ```
 
-운영 공개 전에는 ACM 인증서와 HTTPS, NetworkPolicy, 로그·메트릭·알람 및 데이터 백업 정책을 추가해야 한다. EKS, NAT Gateway, RDS, ElastiCache 및 ALB는 실행 중 비용이 발생한다.
+운영 공개 전에는 ACM 인증서와 HTTPS, NetworkPolicy, 로그·메트릭·알람 및 데이터 백업 정책을 추가해야 한다. EKS, NAT Gateway, RDS 및 ALB는 실행 중 비용이 발생한다.

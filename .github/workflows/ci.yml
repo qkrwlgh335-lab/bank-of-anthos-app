@@ -103,10 +103,13 @@ jobs:
       - name: Build immutable image once
         run: docker build --tag "bank-local/${{ matrix.name }}:${IMAGE_TAG}" "${{ matrix.path }}"
 
+      - name: Select locally built image for scanning
+        run: echo "PUBLISH_IMAGE=bank-local/${{ matrix.name }}:${IMAGE_TAG}" >> "$GITHUB_ENV"
+
       - name: Report HIGH and CRITICAL vulnerabilities with Trivy
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: bank-local/${{ matrix.name }}:${{ env.IMAGE_TAG }}
+          image-ref: ${{ env.PUBLISH_IMAGE }}
           format: table
           severity: HIGH,CRITICAL
           ignore-unfixed: true
@@ -115,7 +118,7 @@ jobs:
       - name: Block fixable HIGH and CRITICAL vulnerabilities
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: bank-local/${{ matrix.name }}:${{ env.IMAGE_TAG }}
+          image-ref: ${{ env.PUBLISH_IMAGE }}
           format: table
           severity: HIGH,CRITICAL
           ignore-unfixed: true
@@ -133,14 +136,55 @@ jobs:
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Push the same image to ECR
+      - name: Publish to or reuse immutable ECR tag
+        id: ecr-image
         if: github.event_name != 'pull_request'
+        shell: bash
         env:
           ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
-          target="${ECR_REGISTRY}/${{ vars.ECR_PREFIX }}/${{ matrix.name }}:${IMAGE_TAG}"
-          docker tag "bank-local/${{ matrix.name }}:${IMAGE_TAG}" "$target"
-          docker push "$target"
+          set -Eeuo pipefail
+          repository="${{ vars.ECR_PREFIX }}/${{ matrix.name }}"
+          target="${ECR_REGISTRY}/${repository}:${IMAGE_TAG}"
+          error_file="${RUNNER_TEMP}/ecr-${{ matrix.name }}.err"
+
+          if digest=$(aws ecr describe-images \
+            --repository-name "$repository" \
+            --image-ids "imageTag=${IMAGE_TAG}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text 2>"$error_file"); then
+            echo "Reusing existing immutable ECR image: ${target}@${digest}"
+            docker pull "$target"
+            reused=true
+          elif grep -q 'ImageNotFoundException' "$error_file"; then
+            docker tag "bank-local/${{ matrix.name }}:${IMAGE_TAG}" "$target"
+            docker push "$target"
+            digest=$(aws ecr describe-images \
+              --repository-name "$repository" \
+              --image-ids "imageTag=${IMAGE_TAG}" \
+              --query 'imageDetails[0].imageDigest' \
+              --output text)
+            reused=false
+          else
+            cat "$error_file" >&2
+            exit 1
+          fi
+
+          [[ "$digest" == sha256:* ]] || { echo "Invalid ECR digest: $digest"; exit 1; }
+          echo "PUBLISH_IMAGE=$target" >> "$GITHUB_ENV"
+          echo "PUBLISHED_ECR_IMAGE=$target" >> "$GITHUB_ENV"
+          echo "ECR_DIGEST=$digest" >> "$GITHUB_ENV"
+          echo "reused=$reused" >> "$GITHUB_OUTPUT"
+
+      - name: Re-scan the exact reused ECR artifact
+        if: github.event_name != 'pull_request' && steps.ecr-image.outputs.reused == 'true'
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.PUBLISH_IMAGE }}
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
 
       - name: Authenticate to Google Cloud through WIF
         if: github.event_name != 'pull_request'
@@ -153,14 +197,35 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: google-github-actions/setup-gcloud@v3
 
-      - name: Push the same image to Artifact Registry
+      - name: Publish to or verify immutable Artifact Registry tag
         if: github.event_name != 'pull_request'
+        shell: bash
         run: |
+          set -Eeuo pipefail
           registry="${{ vars.GCP_REGION }}-docker.pkg.dev"
           gcloud auth configure-docker "$registry" --quiet
           target="$registry/${{ vars.GCP_PROJECT_ID }}/${{ vars.GAR_REPOSITORY }}/${{ matrix.name }}:${IMAGE_TAG}"
-          docker tag "bank-local/${{ matrix.name }}:${IMAGE_TAG}" "$target"
-          docker push "$target"
+          error_file="${RUNNER_TEMP}/gar-${{ matrix.name }}.err"
+
+          if digest=$(gcloud artifacts docker images describe "$target" \
+            --format='value(image_summary.digest)' 2>"$error_file"); then
+            echo "Reusing existing immutable GAR image: ${target}@${digest}"
+          elif grep -Eqi 'NOT_FOUND|not found|does not exist' "$error_file"; then
+            docker tag "$PUBLISHED_ECR_IMAGE" "$target"
+            docker push "$target"
+            digest=$(gcloud artifacts docker images describe "$target" \
+              --format='value(image_summary.digest)')
+          else
+            cat "$error_file" >&2
+            exit 1
+          fi
+
+          [[ "$digest" == sha256:* ]] || { echo "Invalid GAR digest: $digest"; exit 1; }
+          [[ "$digest" == "$ECR_DIGEST" ]] || {
+            echo "Registry digest mismatch: ECR=$ECR_DIGEST GAR=$digest" >&2
+            exit 1
+          }
+          echo "Verified build-once artifact in both registries: $digest"
 
   ci-required-gate:
     name: CI required gate

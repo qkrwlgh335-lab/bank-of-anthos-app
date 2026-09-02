@@ -9,8 +9,10 @@ GitOps 태그만 변경하는 흐름이 동작했다.
 
 - 전체 6개 서비스 실행: [Actions run 33549580465](https://github.com/qkrwlgh335-lab/bank-of-anthos-app/actions/runs/33549580465)
 - Python 3개 서비스 독립 실행: [Actions run 33551155972](https://github.com/qkrwlgh335-lab/bank-of-anthos-app/actions/runs/33551155972)
+- HIGH/CRITICAL 보완 후 최종 전체 실행: [Actions run 33582768076](https://github.com/qkrwlgh335-lab/bank-of-anthos-app/actions/runs/33582768076)
 - 전체 실행 이미지 태그: `sha-5a4825edf92152fd081f93c89cba5845bde72b9b`
 - 독립 실행 이미지 태그: `sha-0c42a52d25a7e2f572f8f6078055fa79fa2e5c98`
+- 최종 DR 공통 태그: `sha-a5a94e243a17b51161229d7be85787d6e8f472c5`
 - 인증: AWS OIDC Role, GCP Workload Identity Federation
 - 장기 AWS Access Key와 GCP Service Account JSON: 사용하지 않음
 

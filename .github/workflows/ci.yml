@@ -3,13 +3,6 @@ name: Service CI and GitOps promotion
 on:
   pull_request:
     branches: [main]
-    paths:
-      - "src/**"
-      - ".github/workflows/ci.yml"
-      - ".github/scripts/**"
-      - "pom.xml"
-      - "mvnw"
-      - ".mvn/**"
   push:
     branches: [main]
     paths:
@@ -119,12 +112,12 @@ jobs:
           ignore-unfixed: true
           exit-code: "0"
 
-      - name: Block CRITICAL vulnerabilities
+      - name: Block fixable HIGH and CRITICAL vulnerabilities
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: bank-local/${{ matrix.name }}:${{ env.IMAGE_TAG }}
           format: table
-          severity: CRITICAL
+          severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
 
@@ -169,10 +162,30 @@ jobs:
           docker tag "bank-local/${{ matrix.name }}:${IMAGE_TAG}" "$target"
           docker push "$target"
 
+  ci-required-gate:
+    name: CI required gate
+    if: always()
+    needs: [changes, build-scan-push]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate service matrix result
+        env:
+          CHANGE_SELECTOR_RESULT: ${{ needs.changes.result }}
+          HAS_CHANGES: ${{ needs.changes.outputs.has_changes }}
+          BUILD_RESULT: ${{ needs.build-scan-push.result }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$CHANGE_SELECTOR_RESULT" == "success" ]] || { echo "Service selection failed"; exit 1; }
+          if [[ "$HAS_CHANGES" == "true" && "$BUILD_RESULT" != "success" ]]; then
+            echo "At least one service test, image build, or HIGH/CRITICAL vulnerability gate failed"
+            exit 1
+          fi
+          echo "CI required gate passed"
+
   promote-gitops:
     name: Promote immutable tags in GitOps
-    needs: [changes, build-scan-push]
-    if: github.event_name != 'pull_request' && needs.changes.outputs.has_changes == 'true'
+    needs: [changes, build-scan-push, ci-required-gate]
+    if: github.event_name != 'pull_request' && needs.changes.outputs.has_changes == 'true' && needs.ci-required-gate.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read

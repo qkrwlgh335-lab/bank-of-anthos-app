@@ -10,9 +10,11 @@ GitOps 태그만 변경하는 흐름이 동작했다.
 - 전체 6개 서비스 실행: [Actions run 33549580465](https://github.com/qkrwlgh335-lab/bank-of-anthos-app/actions/runs/33549580465)
 - Python 3개 서비스 독립 실행: [Actions run 33551155972](https://github.com/qkrwlgh335-lab/bank-of-anthos-app/actions/runs/33551155972)
 - HIGH/CRITICAL 보완 후 최종 전체 실행: [Actions run 33582768076](https://github.com/qkrwlgh335-lab/bank-of-anthos-app/actions/runs/33582768076)
+- 승인형 GCP Drill 후 최신 main 회귀 실행: [Actions run 33596476481](https://github.com/qkrwlgh335-lab/bank-of-anthos-app/actions/runs/33596476481)
 - 전체 실행 이미지 태그: `sha-5a4825edf92152fd081f93c89cba5845bde72b9b`
 - 독립 실행 이미지 태그: `sha-0c42a52d25a7e2f572f8f6078055fa79fa2e5c98`
 - 최종 DR 공통 태그: `sha-a5a94e243a17b51161229d7be85787d6e8f472c5`
+- 최신 CI 공통 태그: `sha-074b9db2e20624f159595ce4308fcf285c4ea3a9`
 - 인증: AWS OIDC Role, GCP Workload Identity Federation
 - 장기 AWS Access Key와 GCP Service Account JSON: 사용하지 않음
 
@@ -73,6 +75,9 @@ flowchart LR
 Python 의존성 갱신, 불필요한 builder 도구 제거, Java distroless 런타임과 의존성 갱신으로
 보완했다. 성공 표시는 스캔 DB 기준으로 **수정 가능한 HIGH/CRITICAL이 0개**라는 뜻이며,
 향후 새 CVE가 등록되면 같은 SHA의 재빌드도 실패할 수 있다.
+
+최신 main 회귀 실행에서도 Python/Java 여섯 서비스, HIGH/CRITICAL gate, AWS OIDC 기반
+ECR push, GCP WIF 기반 GAR push, `CI required gate`, GitOps promotion이 모두 성공했다.
 
 ## 운영 전에 남은 항목
 

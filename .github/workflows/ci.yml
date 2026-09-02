@@ -278,10 +278,30 @@ jobs:
 
       - name: Commit desired-state change
         working-directory: gitops
+        env:
+          GH_TOKEN: ${{ secrets.GITOPS_TOKEN }}
         run: |
+          set -Eeuo pipefail
+          branch="promotion/${IMAGE_TAG}"
           git config user.name "bank-app-ci"
           git config user.email "bank-app-ci@users.noreply.github.com"
+          git switch -c "$branch"
           git add gitops/apps/bank-of-anthos/overlays/dev/kustomization.yaml
-          git diff --cached --quiet && exit 0
+          if git diff --cached --quiet; then
+            echo "GitOps main already contains ${IMAGE_TAG}; no promotion PR is needed" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           git commit -m "deploy: promote ${IMAGE_TAG}"
-          git push origin HEAD:main
+          git fetch origin "$branch:refs/remotes/origin/$branch" 2>/dev/null || true
+          git push --force-with-lease="refs/heads/$branch" origin "HEAD:refs/heads/$branch"
+
+          pr_url=$(gh pr list --repo "${{ vars.GITOPS_REPOSITORY }}" --state open \
+            --head "$branch" --json url --jq '.[0].url')
+          if [[ -z "$pr_url" ]]; then
+            pr_url=$(gh pr create --repo "${{ vars.GITOPS_REPOSITORY }}" \
+              --head "$branch" --base main \
+              --title "deploy: promote ${IMAGE_TAG}" \
+              --body "Automated promotion of the tested immutable image tag \`${IMAGE_TAG}\`. Merge is gated by the GitOps repository branch rule.")
+          fi
+          gh pr merge "$pr_url" --auto --squash --delete-branch
+          echo "GitOps promotion PR: $pr_url" >> "$GITHUB_STEP_SUMMARY"

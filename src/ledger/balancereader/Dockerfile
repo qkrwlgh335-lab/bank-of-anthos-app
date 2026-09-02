@@ -4,8 +4,7 @@ COPY pom.xml .
 COPY src ./src
 RUN mvn -B -DskipTests package
 
-FROM eclipse-temurin:17-jre
+FROM gcr.io/distroless/java17-debian12:nonroot
 WORKDIR /app
 COPY --from=builder /app/target/*.jar /app/app.jar
-USER 1000
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]
